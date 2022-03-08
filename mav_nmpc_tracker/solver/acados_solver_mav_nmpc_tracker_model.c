@@ -545,7 +545,7 @@ int mav_nmpc_tracker_model_acados_create_with_discretization(mav_nmpc_tracker_mo
     lbu[1] = -0.4363323129985824;
     ubu[1] = 0.4363323129985824;
     lbu[2] = 7.649148;
-    ubu[2] = 22.947443999999997;
+    ubu[2] = 15.298296;
 
     for (int i = 0; i < N; i++)
     {
