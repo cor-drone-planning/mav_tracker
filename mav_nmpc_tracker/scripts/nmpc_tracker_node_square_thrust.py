@@ -11,6 +11,10 @@ from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker
 from nmpc_tracker_solver import MPC_Formulation_Param
 from nmpc_tracker_solver import acados_mpc_solver_generation
+from mavros_msgs.msg import AttitudeTarget, State
+from geometry_msgs.msg import PoseStamped, Quaternion
+from mavros_msgs.srv import CommandBool, ParamGet, SetMode
+
 import math
 
 g = 9.8066
@@ -44,6 +48,12 @@ class Mav_Nmpc_Tracker:
         self.mpc_nu_ = 3
         self.mpc_ny_ = 9
         self.mpc_ny_e_ = 6
+
+        # FCU State
+        self.fcu_state = State()
+
+        # Takeoff height
+        self.takeoff_height = self.mpc_form_param_.takeoff_height
 
         # MPC variables
         self.mpc_pos_ref_ = np.zeros((3, self.mpc_N_))
@@ -80,6 +90,15 @@ class Mav_Nmpc_Tracker:
 
         self.mpc_traj_plan_vis_pub_ = rospy.Publisher("/mpc/trajectory_plan_vis", Marker, queue_size=1)
 
+        self.state_sub = rospy.Subscriber('/mavros/state', State, self.state_callback)
+        self.pos_setpoint_pub = rospy.Publisher('/mavros/setpoint_position/local', PoseStamped, queue_size=1)
+        self.set_arming_srv = rospy.ServiceProxy('/mavros/cmd/arming', CommandBool)
+        self.set_mode_srv = rospy.ServiceProxy('/mavros/set_mode', SetMode)
+
+        self.takeoff_setpoint = PoseStamped()
+        self.takeoff_setpoint.pose.position.z = self.takeoff_height
+        self.takeoff_setpoint.pose.orientation.w = 1.0
+
     def set_odom(self, odom_msg):
         if self.received_first_odom_ is False:
             self.received_first_odom_ = True
@@ -97,6 +116,111 @@ class Mav_Nmpc_Tracker:
                                                             odom_msg.pose.pose.orientation.z,
                                                             odom_msg.pose.pose.orientation.w])
         self.mav_state_current_ = np.array([px, py, pz, vx, vy, vz, rpy[0], rpy[1], rpy[2]])
+
+    def arm(self, timeout):
+        arm = True
+        rospy.loginfo("setting FCU arm: {0}".format(arm))
+        old_arm = self.fcu_state.armed
+        loop_freq = 5  # Hz
+        rate = rospy.Rate(loop_freq)
+        arm_set = False
+        for i in range(timeout * loop_freq):
+            self.takeoff_setpoint.header.stamp = rospy.Time.now()
+            self.pos_setpoint_pub.publish(self.takeoff_setpoint)
+
+            if self.fcu_state.armed == arm:
+                arm_set = True
+                # rospy.loginfo("set arm success | seconds: {0} of {1}".format(
+                #     i / loop_freq, timeout))
+                break
+            else:
+                try:
+                    res = self.set_arming_srv(arm)
+                    if not res.success:
+                        rospy.logerr("failed to send arm command")
+                except rospy.ServiceException as e:
+                    rospy.logerr(e)
+
+            try:
+                rate.sleep()
+                # time.sleep(1.0/loop_freq)
+            except rospy.ROSException as e:
+                print(e)
+            # rate.sleep()
+
+    def set_offboard(self, timeout):
+        mode = "OFFBOARD"
+        rospy.loginfo("setting FCU mode: {0}".format(mode))
+        old_mode = self.fcu_state.mode
+        loop_freq = 5  # Hz
+        rate = rospy.Rate(loop_freq)
+        mode_set = False
+        for i in range(timeout * loop_freq):
+
+            self.takeoff_setpoint.header.stamp = rospy.Time.now()
+            self.pos_setpoint_pub.publish(self.takeoff_setpoint)
+
+            if self.fcu_state.mode == mode:
+                mode_set = True
+                # rospy.loginfo("set mode success | seconds: {0} of {1}".format(
+                #     i / loop_freq, timeout))
+                break
+            else:
+                try:
+                    res = self.set_mode_srv(0, mode)  # 0 is custom mode
+                    if not res.mode_sent:
+                        rospy.logerr("failed to send mode command")
+                except rospy.ServiceException as e:
+                    rospy.logerr(e)
+
+            try:
+                rate.sleep()
+                # time.sleep(1.0/loop_freq)
+            except rospy.ROSException as e:
+                print(e)
+            # rate.sleep()
+
+    def state_callback(self, data):
+        if self.fcu_state.armed != data.armed:
+            rospy.loginfo("armed state changed from {0} to {1}".format(
+                self.fcu_state.armed, data.armed))
+
+        if self.fcu_state.connected != data.connected:
+            rospy.loginfo("connected changed from {0} to {1}".format(
+                self.fcu_state.connected, data.connected))
+
+        if self.fcu_state.mode != data.mode:
+            rospy.loginfo("mode changed from {0} to {1}".format(
+                self.fcu_state.mode, data.mode))
+
+        self.fcu_state = data
+
+    def takeoff(self):
+        self.arm(20)
+        self.set_offboard(20)
+
+        loop_freq = 10  # Hz
+        rate = rospy.Rate(loop_freq)
+        timeout = 20
+
+        takeoff_success = False
+
+        for i in range(timeout * loop_freq):
+            self.takeoff_setpoint.header.stamp = rospy.Time.now()
+            self.pos_setpoint_pub.publish(self.takeoff_setpoint)
+
+            print("Current z = " + str(self.mav_state_current_[2]))
+            if self.mav_state_current_[2] > self.takeoff_height - 0.2:
+                print(" Take off complete! ")
+                takeoff_success = True
+                break
+            try:
+                rate.sleep()
+                # time.sleep(1.0/loop_freq)
+            except rospy.ROSException as e:
+                print(e)
+
+        return takeoff_success
 
     def set_traj_ref(self, traj_msg):
         self.traj_received_time_ = rospy.Time.now()
@@ -371,6 +495,8 @@ def nmpc_tracker_control():
     mpc_form_param.r_roll = rospy.get_param("~r_roll")
     mpc_form_param.r_pitch = rospy.get_param("~r_pitch")
     mpc_form_param.r_thrust = rospy.get_param("~r_thrust")
+    # takeoff height
+    mpc_form_param.takeoff_height = rospy.get_param("~takeoff_height")
 
     # create a nmpc tracker
     nmpc_tracker = Mav_Nmpc_Tracker(mpc_form_param, tracking_mode, yaw_command_mode)
@@ -379,14 +505,25 @@ def nmpc_tracker_control():
         if nmpc_tracker.received_first_odom_ is False:
             rospy.logwarn('Waiting for first Odometry!')
         else:
-            nmpc_tracker.calculate_roll_pitch_yawrate_thrust_cmd()
-            if nmpc_tracker.yaw_command_mode_ == 'yawrate':
-                nmpc_tracker.pub_roll_pitch_yawrate_thrust_cmd()
-            elif nmpc_tracker.yaw_command_mode_ == 'yaw':
-                nmpc_tracker.pub_roll_pitch_yaw_thrust_cmd()
-            else: 
-                rospy.logwarn('yaw control mode is not set!')
-            nmpc_tracker.pub_mpc_traj_plan_vis()
+            break
+
+    ''' Arm, change mode and take off '''
+    takeoff_flag = nmpc_tracker.takeoff()
+    if not takeoff_flag:
+        rospy.logwarn('Takeoff failed!')
+        return
+
+    ''' Run MPC tracker '''
+    while not rospy.is_shutdown():
+        nmpc_tracker.calculate_roll_pitch_yawrate_thrust_cmd()
+        if nmpc_tracker.yaw_command_mode_ == 'yawrate':
+            nmpc_tracker.pub_roll_pitch_yawrate_thrust_cmd()
+        elif nmpc_tracker.yaw_command_mode_ == 'yaw':
+            nmpc_tracker.pub_roll_pitch_yaw_thrust_cmd()
+        else:
+            rospy.logwarn('yaw control mode is not set!')
+        nmpc_tracker.pub_mpc_traj_plan_vis()
+
         rate.sleep()
 
 

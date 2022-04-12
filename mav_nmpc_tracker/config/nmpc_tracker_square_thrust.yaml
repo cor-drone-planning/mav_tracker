@@ -4,7 +4,7 @@ N: 20
 
 # MAV dynamics param
 mass: 1.56
-thrust_scale: 26.8 # 26.75
+thrust_scale: 20 # 26.75, 26.8
 thrust_bias: 1.57  # 1.57
 roll_time_constant: 0.3256
 roll_gain: 1.0234
@@ -33,3 +33,5 @@ thrust_max: 1       # m*g
 
 K_yaw: 1.8
 yawrate_max: 90.0     # deg
+
+takeoff_height: 1.2 # m

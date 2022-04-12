@@ -32,3 +32,4 @@ thrust_max: 1       # m*g
 
 K_yaw: 1.8
 yawrate_max: 90.0     # deg
+

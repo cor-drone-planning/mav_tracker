@@ -45,6 +45,8 @@ class MPC_Formulation_Param:
     r_pitch = 50
     r_thrust = 1
 
+    takeoff_height = 1.0
+
 
 def acados_mpc_solver_generation(mpc_form_param):
     # Acados model
