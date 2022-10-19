@@ -52,7 +52,7 @@ class MAV_Fake_Motion_Simulator:
         # ROS publisher
         self.odom_pub_ = rospy.Publisher("/mav_sim_odom", Odometry, queue_size=1)
         self.odom_msg_ = Odometry()
-        self.odom_msg_.header.frame_id = "map"
+        self.odom_msg_.header.frame_id = "world"
         self.odom_msg_.child_frame_id = "base_link"
         self.cmd_pub_ = rospy.Publisher("/mav_sim_cmd", RollPitchYawrateThrust, queue_size=1)
         self.cmd_msg_ = RollPitchYawrateThrust()

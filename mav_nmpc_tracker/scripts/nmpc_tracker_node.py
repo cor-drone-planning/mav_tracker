@@ -6,7 +6,10 @@ import tf
 from nav_msgs.msg import Odometry
 from mav_msgs.msg import RollPitchYawrateThrust
 from mavros_msgs.msg import AttitudeTarget
-from trajectory_msgs.msg import MultiDOFJointTrajectory
+# from trajectory_msgs.msg import MultiDOFJointTrajectory
+from quadrotor_msgs.msg import PositionCommand
+from quadrotor_msgs.msg import Trajectory
+from quadrotor_msgs.msg import TrajectoryPoint
 from geometry_msgs.msg import Point
 from visualization_msgs.msg import Marker
 from nmpc_tracker_solver import MPC_Formulation_Param
@@ -59,11 +62,11 @@ class Mav_Nmpc_Tracker:
 
         # ROS subscriber
         # self.odom_sub_ = rospy.Subscriber("/mav_sim_odom", Odometry, self.set_odom)
-        self.odom_sub_ = rospy.Subscriber("/mavros/local_position/odom_local", Odometry, self.set_odom)
+        self.odom_sub_ = rospy.Subscriber("/mavros/local_position/odom", Odometry, self.set_odom)
         self.received_first_odom_ = False
         self.odom_received_time_ = rospy.Time.now()
         # self.traj_sub_ = rospy.Subscriber("/mav_sim_trajectory", MultiDOFJointTrajectory, self.set_traj_ref)
-        self.traj_sub_ = rospy.Subscriber("/command/trajectory", MultiDOFJointTrajectory, self.set_traj_ref)
+        self.traj_sub_ = rospy.Subscriber("/command/trajectory", Trajectory, self.set_traj_ref)
         self.traj_received_time_ = rospy.Time.now()
         self.traj_pos_ref_ = np.zeros((3, self.mpc_N_))
         self.traj_vel_ref_ = np.zeros((3, self.mpc_N_))
@@ -100,13 +103,14 @@ class Mav_Nmpc_Tracker:
         self.traj_received_time_ = rospy.Time.now()
         try:
             for iStage in range(0, self.mpc_N_):
-                self.traj_pos_ref_[0, iStage] = traj_msg.points[iStage].transforms[0].translation.x
-                self.traj_pos_ref_[1, iStage] = traj_msg.points[iStage].transforms[0].translation.y
-                self.traj_pos_ref_[2, iStage] = traj_msg.points[iStage].transforms[0].translation.z
-                self.traj_vel_ref_[0, iStage] = traj_msg.points[iStage].velocities[0].linear.x
-                self.traj_vel_ref_[1, iStage] = traj_msg.points[iStage].velocities[0].linear.y
-                self.traj_vel_ref_[2, iStage] = traj_msg.points[iStage].velocities[0].linear.z
+                self.traj_pos_ref_[0, iStage] = traj_msg.points[iStage].pose.position.x
+                self.traj_pos_ref_[1, iStage] = traj_msg.points[iStage].pose.position.y
+                self.traj_pos_ref_[2, iStage] = traj_msg.points[iStage].pose.position.z
+                self.traj_vel_ref_[0, iStage] = traj_msg.points[iStage].velocities.linear.x
+                self.traj_vel_ref_[1, iStage] = traj_msg.points[iStage].velocities.linear.y
+                self.traj_vel_ref_[2, iStage] = traj_msg.points[iStage].velocities.linear.z
         except:
+            # TODO: incorrect data type
             rospy.logwarn('Received commanded trajectory incorrect! Will try to hover')
             self.traj_pos_ref_ = np.tile(self.mav_state_current_[0:3].reshape((-1, 1)), (1, self.mpc_N_))
             self.traj_vel_ref_ = np.tile(np.array([0.0, 0.0, 0.0]).reshape((-1, 1)), (1, self.mpc_N_))
@@ -296,7 +300,7 @@ class Mav_Nmpc_Tracker:
     def pub_mpc_traj_plan_vis(self):
         try:
             marker_msg = Marker()
-            marker_msg.header.frame_id = "map"
+            marker_msg.header.frame_id = "world"
             marker_msg.header.stamp = rospy.Time.now()
             marker_msg.type = 8
             marker_msg.action = 0
